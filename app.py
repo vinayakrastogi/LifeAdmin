@@ -5,6 +5,7 @@ Run:  streamlit run app.py
 from __future__ import annotations
 
 import dataclasses
+from uuid import uuid4
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -12,9 +13,16 @@ from typing import Dict, List, Optional
 import pandas as pd
 import plotly.graph_objects as pgo
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from lifeadmin import database as db
 from lifeadmin import demo
+from lifeadmin import notes
+from lifeadmin import auth
+from lifeadmin.demo_accounts import seed_if_enabled
+from lifeadmin.login_ui import require_login, logout, user_action
 from lifeadmin.export import documents_dataframe, to_csv, to_ics
 from lifeadmin.extractor import ALLOWED_EXTENSIONS, MAX_FILE_MB, extract_text, ocr_available
 from lifeadmin.health import checks, collection_score, health_score, timeliness_score, verdict
@@ -31,13 +39,17 @@ from lifeadmin.style import (C, PILL, TYPE_STYLE, avatar_css, brand, card_title,
 st.set_page_config(page_title="LifeAdmin", page_icon="🐙", layout="wide",
                    initial_sidebar_state="expanded")
 inject_styles()
-db.init_db()
+auth.init_auth()
+seed_if_enabled()
+notes.init_notes()
+signed_in_user = require_login()
 
 ROOT = Path(__file__).resolve().parent
 TODAY = date.today()
-PAGES = ["Dashboard", "Upload", "Documents", "Reminders"]
+PAGES = ["Dashboard", "Upload", "Documents", "Reminders", "Notes"]
 NAV_ICONS = {"Dashboard": ":material/home:", "Upload": ":material/cloud_upload:",
-             "Documents": ":material/description:", "Reminders": ":material/notifications:"}
+             "Documents": ":material/description:", "Reminders": ":material/notifications:",
+             "Notes": ":material/edit_note:"}
 QUICK = {  # Quick Upload tiles -> accepted extensions
     "pdf": ("PDF Document", [".pdf"], "x.pdf"),
     "image": ("Image File", [".png", ".jpg", ".jpeg"], "x.png"),
@@ -118,6 +130,10 @@ def card_header(title: str, icon_name: str, target: Optional[str] = None, key: s
 
 def load_demo() -> None:
     """Load (or refresh) the 24 demo documents, dated relative to today."""
+    user = auth.session_user(st.session_state.get("auth_token"))
+    if not user:
+        return
+    db.set_current_user(user["id"])
     n = demo.load_demo()
     st.session_state["_toast"] = f"Loaded {n} demo documents"
 
@@ -193,6 +209,8 @@ def sidebar() -> None:
         st.radio("Navigation", PAGES, key="nav", label_visibility="collapsed",
                  format_func=lambda p: f"{NAV_ICONS[p]} {p}")
         with st.container(key="sidebar_footer"):
+            st.caption(signed_in_user["email"])
+            st.button("Log out", on_click=logout, key="logout", width="stretch")
             html(motto())
 
 
@@ -556,10 +574,10 @@ def page_reminders(docs: List[Document], completed: set) -> None:
                     st.markdown(f"**{esc(friendly_title(d.filename))}**")
                     if is_done:
                         st.button("Restore reminder", key=f"restore_{d.id}", width="stretch",
-                                  on_click=db.restore_reminder, args=(d.id,))
+                                  on_click=user_action, args=(db.restore_reminder, d.id))
                     else:
                         st.button("Mark as completed", key=f"done_{d.id}", type="primary", width="stretch",
-                                  on_click=db.complete_reminder, args=(d.id,))
+                                  on_click=user_action, args=(db.complete_reminder, d.id))
                     st.button("Open in Documents", key=f"open_{d.id}", width="stretch",
                               on_click=go, args=("Documents",), kwargs={"doc_pick": d.id, "doc_status": "All"})
                     st.download_button("Add to calendar (.ics)", to_ics([d]), f"lifeadmin_{d.id}.ics",
@@ -604,6 +622,36 @@ def page_reminders(docs: List[Document], completed: set) -> None:
         html(promo("Small steps today,", "big freedom tomorrow.", byline="LifeAdmin"))
 
 
+def page_notes() -> None:
+    st.title("Notes")
+    st.caption("Your personal notes and lesson notes saved from PyLearn.")
+    with st.form("new_note", clear_on_submit=True):
+        title = st.text_input("Title", max_chars=200)
+        content = st.text_area("Note", max_chars=20000)
+        if st.form_submit_button("Save note", type="primary"):
+            if not title.strip() or not content.strip():
+                st.error("Enter a title and a note.")
+            else:
+                notes.create_note(user_id=signed_in_user["id"], source_app="lifeadmin",
+                                  owner_id=str(signed_in_user["id"]), resource_id="personal",
+                                  request_id=str(uuid4()), title=title.strip(), content=content.strip())
+                st.success("Note saved.")
+    if st.button("Refresh notes"):
+        st.rerun()
+    items = notes.list_notes(signed_in_user["id"], limit=100)
+    if not items:
+        st.info("No notes yet. Save a note from a PyLearn lesson to see it here.")
+    for note in items:
+        with st.container(border=True):
+            st.subheader(note["title"])
+            st.caption("PyLearn lesson" if note["source_app"] == "pylearn" else "Personal note")
+            st.text(note["content"])
+            st.caption(note["created_at"])
+            if st.button("Delete note", key=f'delete_note_{note["id"]}'):
+                notes.delete_note(note["id"], signed_in_user["id"])
+                st.rerun()
+
+
 # ================================================================ main
 sidebar()
 documents = db.list_documents()
@@ -624,5 +672,7 @@ elif page == "Upload":
     page_upload(documents)
 elif page == "Documents":
     page_documents(documents, done_ids)
+elif page == "Notes":
+    page_notes()
 else:
     page_reminders(documents, done_ids)

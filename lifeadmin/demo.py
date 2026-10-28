@@ -7,7 +7,8 @@ through the real pipeline, stored, and a few get notes / a completed reminder.
 from __future__ import annotations
 
 import importlib.util
-import shutil
+import sqlite3
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -64,10 +65,16 @@ def load_demo(today: date | None = None, regenerate: bool = True) -> int:
 
 def reset_database() -> Path | None:
     """Back up the current database file and start empty. Returns the backup path."""
+    if db.is_postgres():
+        raise ValueError("Local reset is disabled when LIFEADMIN_DATABASE_URL is configured. Use a new empty cloud database.")
     if not db.DB_PATH.exists():
         return None
     backup = db.DB_PATH.with_name(f"lifeadmin_backup_{datetime.now():%Y%m%d_%H%M%S}.db")
-    shutil.copy2(db.DB_PATH, backup)
+    with closing(sqlite3.connect(db.DB_PATH)) as source, closing(sqlite3.connect(backup)) as target:
+        source.backup(target)
     db.DB_PATH.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(db.DB_PATH) + suffix).unlink(missing_ok=True)
+    db.set_current_user(None)
     db.init_db()
     return backup

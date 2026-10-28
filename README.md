@@ -1,17 +1,31 @@
 # 🗂️ LifeAdmin — Smart Personal Document & Deadline Manager
 
-Upload a document → extract text → find key details → store in SQLite → dashboard → expiry alerts.
+Upload a document → extract text → find key details → store in SQLite or PostgreSQL → dashboard → expiry alerts.
 No paid AI or API keys needed; everything runs locally.
 
 ## Quick start
+
+For the independent notes HTTP API and PyLearn / same-network setup, see
+[API.md](API.md). It runs on port 8001 and keeps API callers separate from this
+project's source and database.
+
+The fixed internet endpoint is configured through ngrok. After setting up the
+local environment, `python scripts/run_api.py` starts the API and tunnel together.
+See [NGROK_SETUP.md](NGROK_SETUP.md) for startup and moving hosting to another device.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python scripts/make_samples.py   # optional: demo PDFs with dates relative to today
+# Fresh install/reset only (backs up the previous database):
+# python scripts/reset_database.py --confirm
 streamlit run app.py
 ```
+
+Sign in with `demostudent@example.com` / `demostudent` (student), or `demofaculty@example.com` / `demofaculty` (faculty) after the demo reset, or create
+an account. Each user has private notes, documents, reminders and activity history.
+Use the same email in PyLearn to see its lesson notes under **Notes**.
 
 Open the **Upload** page and try the PDFs in `sample_docs/`, or press **Load demo documents** on an empty Dashboard.
 Run the checks with `python -m pytest -q tests` and `python scripts/smoke_ui.py`.
@@ -21,7 +35,7 @@ Run the checks with `python -m pytest -q tests` and `python scripts/smoke_ui.py`
 Click **Load demo documents** (empty Dashboard, or the profile menu at the top right), or run:
 
 ```bash
-python scripts/load_demo.py          # add / refresh the demo documents
+python scripts/load_demo.py          # prompts for the demo account password
 python scripts/load_demo.py --reset  # back up the database, start empty, then load
 ```
 
@@ -63,7 +77,7 @@ The top bar search filters documents from any page, the bell lists deadlines nee
 - Always review the pre-filled form before saving; you can correct any field.
 - **OCR (optional):** install the Tesseract binary, then `pip install pytesseract Pillow` (add `pdf2image` + poppler for scanned PDFs).
 - **ML (optional):** `classifier.train_ml_classifier(texts, labels)` trains a Naive Bayes model on your own labelled documents (needs `scikit-learn`).
-- Data lives in `data/` (SQLite file + uploaded originals). Delete that folder to reset. It is git-ignored; documents contain personal data, so keep it private.
+- Locally, data lives in `data/` (SQLite file + uploaded originals). With `LIFEADMIN_DATABASE_URL`, records live in PostgreSQL while uploads still use the local filesystem. Use the documented reset script for local resets; do not delete files to reset a cloud database. The data directory is git-ignored.
 
 ## Project layout
 
@@ -80,3 +94,7 @@ data/                  created at runtime
 ## Ideas to extend
 
 Email/WhatsApp reminders, multi-user login, a scikit-learn classifier trained on your data, renewal cost tracking, folder watching.
+# Cloud database and deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) to share PostgreSQL between the Streamlit UI and API
+using `LIFEADMIN_DATABASE_URL`. Leaving it blank retains local SQLite. Uploaded files remain temporary.

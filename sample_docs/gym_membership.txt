@@ -2,7 +2,7 @@ Cult.fit Gym Membership
 Membership No: CULT-55120
 Name: Adityavardhan Reddy
 Plan: Quarterly membership
-Renewal Date: November 06, 2026
+Renewal Date: November 16, 2026
 Fee: Rs. 6,999
 
 SAMPLE DOCUMENT - generated for the LifeAdmin demo

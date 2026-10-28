@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import tempfile
-import time
+from uuid import uuid4
 from pathlib import Path
 from typing import Tuple
 
@@ -43,6 +43,6 @@ def store_upload(data: bytes, filename: str) -> str:
     """Save the original file under data/uploads with a unique, safe name."""
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name)
-    target = UPLOAD_DIR / f"{int(time.time())}_{safe}"
+    target = UPLOAD_DIR / f"{uuid4().hex}_{safe}"
     target.write_bytes(data)
     return str(target)

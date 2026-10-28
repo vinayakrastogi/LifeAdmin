@@ -13,3 +13,5 @@ pypdfium2>=4.30
 # Only for generating demo PDFs and running tests:
 reportlab>=4.0
 pytest>=8.0
+# Independent notes HTTP API (the Streamlit UI can still run on its own)
+-r requirements-api.txt

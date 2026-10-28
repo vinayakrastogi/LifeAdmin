@@ -1,14 +1,15 @@
-"""SQLite persistence: documents, reminders, users, activity_logs."""
+"""User-scoped persistence, locally in SQLite or shared through PostgreSQL."""
 from __future__ import annotations
 
 import os
-import sqlite3
 from contextlib import closing
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Set
 
 from .models import Document
+from .storage import Connection, IntegrityError, Row, database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("LIFEADMIN_DB", BASE_DIR / "data" / "lifeadmin.db"))
@@ -23,10 +24,13 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
     filename TEXT NOT NULL,
     doc_type TEXT NOT NULL DEFAULT 'Other',
     holder_name TEXT DEFAULT '',
@@ -47,6 +51,7 @@ CREATE TABLE IF NOT EXISTS reminders (
 );
 CREATE TABLE IF NOT EXISTS activity_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
     action TEXT NOT NULL,
     detail TEXT DEFAULT '',
     created_at TEXT NOT NULL
@@ -58,31 +63,52 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def is_postgres() -> bool:
+    return database_url(DB_PATH).startswith("postgresql+")
 
 
-DEFAULT_USER = os.environ.get("LIFEADMIN_USER", "Adityavardhan Reddy")
+def connect() -> Connection:
+    url = database_url(DB_PATH)
+    if url.startswith("sqlite:"):
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return Connection(url)
+
+
+_current_user: ContextVar[int | None] = ContextVar("lifeadmin_user", default=None)
+
+
+def set_current_user(user_id: int | None) -> None:
+    _current_user.set(user_id)
+
+
+def current_user_id() -> int:
+    user_id = _current_user.get()
+    if user_id is None:
+        raise PermissionError("Sign in to access your data.")
+    return user_id
 
 
 def init_db() -> None:
     with closing(connect()) as conn, conn:
+        conn.lock("schema")
         conn.executescript(SCHEMA)
-        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
-            conn.execute("INSERT INTO users (name, created_at) VALUES (?, ?)",
-                         (DEFAULT_USER, _now()))
-        # Older databases were seeded with a placeholder name.
-        conn.execute("UPDATE users SET name = ? WHERE name = 'Default User'", (DEFAULT_USER,))
+        # Old unowned data remains inaccessible until explicitly reset or migrated.
+        for table, additions in {
+            "users": {"email": "TEXT", "password_hash": "TEXT"},
+            "documents": {"user_id": "INTEGER REFERENCES users(id)"},
+            "activity_logs": {"user_id": "INTEGER REFERENCES users(id)"},
+        }.items():
+            columns = conn.columns(table)
+            for column, definition in additions.items():
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email)")
 
 
 def get_user_name() -> str:
     with closing(connect()) as conn:
-        row = conn.execute("SELECT name FROM users ORDER BY id LIMIT 1").fetchone()
-    return row[0] if row else DEFAULT_USER
+        row = conn.execute("SELECT name FROM users WHERE id = ?", (current_user_id(),)).fetchone()
+    return row[0] if row else ""
 
 
 def set_user_name(name: str) -> None:
@@ -90,15 +116,15 @@ def set_user_name(name: str) -> None:
     if not name:
         raise ValueError("Name cannot be empty")
     with closing(connect()) as conn, conn:
-        conn.execute("UPDATE users SET name = ? WHERE id = (SELECT MIN(id) FROM users)", (name,))
+        conn.execute("UPDATE users SET name = ? WHERE id = ?", (name[:100], current_user_id()))
     log("PROFILE", f"name set to {name}")
 
 
 def log(action: str, detail: str = "") -> None:
     with closing(connect()) as conn, conn:
         conn.execute(
-            "INSERT INTO activity_logs (action, detail, created_at) VALUES (?, ?, ?)",
-            (action, detail, _now()),
+            "INSERT INTO activity_logs (user_id, action, detail, created_at) VALUES (?, ?, ?, ?)",
+            (current_user_id(), action, detail, _now()),
         )
 
 
@@ -107,11 +133,11 @@ def add_document(doc: Document) -> int:
     values = doc.to_dict()
     with closing(connect()) as conn, conn:
         cur = conn.execute(
-            f"INSERT INTO documents ({', '.join(DOC_COLUMNS)}) "
-            f"VALUES ({', '.join('?' for _ in DOC_COLUMNS)})",
-            [values[c] for c in DOC_COLUMNS],
+            f"INSERT INTO documents (user_id, {', '.join(DOC_COLUMNS)}) "
+            f"VALUES (?, {', '.join('?' for _ in DOC_COLUMNS)}) RETURNING id",
+            [current_user_id(), *[values[c] for c in DOC_COLUMNS]],
         )
-        doc_id = cur.lastrowid
+        doc_id = cur.fetchone()[0]
     log("ADD", f"{doc.filename} ({doc.doc_type})")
     return doc_id
 
@@ -122,15 +148,17 @@ def update_document(doc: Document) -> None:
     values = doc.to_dict()
     sets = ", ".join(f"{c} = ?" for c in DOC_COLUMNS)
     with closing(connect()) as conn, conn:
-        conn.execute(f"UPDATE documents SET {sets} WHERE id = ?",
-                     [values[c] for c in DOC_COLUMNS] + [doc.id])
+        changed = conn.execute(f"UPDATE documents SET {sets} WHERE id = ? AND user_id = ?",
+                              [values[c] for c in DOC_COLUMNS] + [doc.id, current_user_id()]).rowcount
+        if not changed:
+            raise PermissionError("Document not found.")
     log("UPDATE", f"{doc.filename} (id {doc.id})")
 
 
 def delete_document(doc_id: int) -> None:
     doc = get_document(doc_id)
     with closing(connect()) as conn, conn:
-        conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+        conn.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, current_user_id()))
     if doc:
         if doc.stored_path:
             try:
@@ -142,18 +170,20 @@ def delete_document(doc_id: int) -> None:
 
 def get_document(doc_id: int) -> Optional[Document]:
     with closing(connect()) as conn:
-        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
-    return Document.from_row(row) if row else None
+        row = conn.execute("SELECT * FROM documents WHERE id = ? AND user_id = ?", (doc_id, current_user_id())).fetchone()
+    return Document.from_row({k: row[k] for k in row.keys() if k != "user_id"}) if row else None
 
 
 def list_documents() -> List[Document]:
     with closing(connect()) as conn:
-        rows = conn.execute("SELECT * FROM documents ORDER BY id DESC").fetchall()
-    return [Document.from_row(r) for r in rows]
+        rows = conn.execute("SELECT * FROM documents WHERE user_id = ? ORDER BY id DESC", (current_user_id(),)).fetchall()
+    return [Document.from_row({k: r[k] for k in r.keys() if k != "user_id"}) for r in rows]
 
 
 def dismiss_reminder(doc_id: int) -> None:
     """Mark a reminder as completed (it moves to the Completed tab)."""
+    if get_document(doc_id) is None:
+        raise PermissionError("Document not found.")
     with closing(connect()) as conn, conn:
         conn.execute("INSERT INTO reminders (document_id, dismissed_at) VALUES (?, ?)",
                      (doc_id, _now()))
@@ -162,11 +192,14 @@ def dismiss_reminder(doc_id: int) -> None:
 
 def dismissed_ids() -> Set[int]:
     with closing(connect()) as conn:
-        rows = conn.execute("SELECT DISTINCT document_id FROM reminders").fetchall()
+        rows = conn.execute("""SELECT DISTINCT document_id FROM reminders r
+            JOIN documents d ON d.id = r.document_id WHERE d.user_id = ?""", (current_user_id(),)).fetchall()
     return {r[0] for r in rows}
 
 
 def restore_reminder(doc_id: int) -> None:
+    if get_document(doc_id) is None:
+        raise PermissionError("Document not found.")
     with closing(connect()) as conn, conn:
         conn.execute("DELETE FROM reminders WHERE document_id = ?", (doc_id,))
     log("RESTORE", f"reminder for document id {doc_id}")
@@ -177,8 +210,8 @@ complete_reminder = dismiss_reminder
 completed_ids = dismissed_ids
 
 
-def list_logs(limit: int = 50) -> List[sqlite3.Row]:
+def list_logs(limit: int = 50) -> List[Row]:
     with closing(connect()) as conn:
         return conn.execute(
-            "SELECT * FROM activity_logs ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM activity_logs WHERE user_id = ? ORDER BY id DESC LIMIT ?", (current_user_id(), limit)
         ).fetchall()
