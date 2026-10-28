@@ -4,6 +4,20 @@ The Streamlit UI and FastAPI API remain part of the independent LifeAdmin projec
 Both now support the same PostgreSQL database, even when deployed on different hosts.
 edT continues to communicate only over the LifeAdmin HTTP API.
 
+## Current demonstration deployment
+
+- Interface: https://lifeadmin-vinayakrastogi.onrender.com
+- API: https://lifeadmin-api-vinayakrastogi.onrender.com
+- API documentation: https://lifeadmin-api-vinayakrastogi.onrender.com/docs
+- Repository: https://github.com/vinayakrastogi/LifeAdmin (private)
+
+The interface and API are two **native Python Free web services** in Render's Singapore
+region, sharing LifeAdmin's own Neon project. Neither uses Docker. edT uses a separate
+Neon project and calls the LifeAdmin API over HTTPS. The original source repository
+remains configured as the local Git `upstream`; this deployment copy is `origin`.
+Existing local accounts, notes, sessions and document metadata were migrated from a
+read-only SQLite snapshot. Local uploads were not copied to cloud storage.
+
 ## Database configuration
 
 1. Create a separate free Neon project for LifeAdmin (do not reuse edT's database).
@@ -40,10 +54,26 @@ Use the first command as the build command, the second as the start command, and
 as the health path. Configure `LIFEADMIN_API_KEY` with the same random secret as edT.
 ngrok is unnecessary for an API hosted on Render. LifeAdmin does not require Docker.
 The `.python-version` file selects the latest supported Python 3.12 patch on Render;
-select Python 3.12 in Streamlit's advanced deployment settings as well. The API installs
+select Python 3.12 if using Streamlit Community Cloud instead. The API installs
 only `requirements-api.txt`; the Streamlit UI installs the full `requirements.txt`.
 
-Deploy `app.py` on Streamlit Community Cloud. Add the following **root-level** entries to its
+For the interface, create another **Free Python web service** from the same private repository:
+
+```sh
+pip install -r requirements.txt
+streamlit run app.py --server.address 0.0.0.0 --server.port "$PORT" --server.headless true --browser.gatherUsageStats false
+```
+
+Set the UI health path to `/_stcore/health`. Configure `LIFEADMIN_DATABASE_URL` with the
+same PostgreSQL URL as the API and `LIFEADMIN_SEED_DEMO_USERS=true`. The UI does not need
+the integration API key. Keep Streamlit's CORS and XSRF protections enabled.
+
+This deployment uses Render for the UI to reuse the GitHub app's repository-scoped access.
+Render's 750 monthly free service hours are shared across the workspace, including edT;
+idle services sleep, so this setup is intended for intermittent demonstrations. Open the
+services before presenting to allow time for cold starts.
+
+Alternatively, deploy `app.py` on Streamlit Community Cloud. Add these **root-level** entries to its
 Secrets settings (actual secrets stay in provider settings):
 
 ```toml
@@ -53,6 +83,7 @@ LIFEADMIN_SEED_DEMO_USERS = "true"
 
 Streamlit exports root-level secrets as environment variables. API keys used only by the
 integration API do not need to be added to the UI service.
+Private GitHub repositories require Streamlit's additional private-repository authorization.
 
 ## Preserve an existing local database
 
