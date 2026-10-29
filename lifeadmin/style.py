@@ -242,7 +242,7 @@ div[class*=st-key-qt],div[class*=st-key-qtsel_]{border:1px solid var(--border);b
 [data-testid=stSidebar] label:has(input[value="4"]):after{content:'Calendar'}
 [data-testid=stSidebar] label:has(input[value="5"]):after{content:'Notes'}
 }
-@media(min-width:768px) and (max-width:1023px){.st-key-layout_calendar>[data-testid=stLayoutWrapper]>[data-testid=stHorizontalBlock]>[data-testid=stColumn],.st-key-layout_documents>[data-testid=stLayoutWrapper]>[data-testid=stHorizontalBlock]>[data-testid=stColumn]{flex-basis:100%!important}}
+@media(min-width:768px) and (max-width:1023px){.la-summary strong{font-size:34px;white-space:nowrap}.la-summary .next{min-width:60px}.la-summary .next b{font-size:20px;white-space:nowrap}.st-key-layout_calendar>[data-testid=stLayoutWrapper]>[data-testid=stHorizontalBlock]>[data-testid=stColumn],.st-key-layout_documents>[data-testid=stLayoutWrapper]>[data-testid=stHorizontalBlock]>[data-testid=stColumn]{flex-basis:100%!important}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.la-count{--count:var(--target)}}
 </style>
 """
@@ -390,7 +390,7 @@ def health_ring(score: int, label: str = "Document health") -> str:
 
 
 def vault_summary(valid: int, total: int, next_days: int | None) -> str:
-    due = "No deadline" if next_days is None else "Today" if next_days == 0 else f"{next_days} days"
+    due = "No deadline" if next_days is None else "Today" if next_days == 0 else "1 day" if next_days == 1 else f"{next_days} days"
     return (f'<div class="la-summary"><div><div class="la-eyebrow">A little less to think about</div>'
             f'<strong>{valid} of {total}</strong><div>documents are up to date</div></div>'
             f'<div class="next"><div class="la-eyebrow">Next due</div><b>{esc(due)}</b></div></div>')
