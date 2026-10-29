@@ -2,8 +2,8 @@
 
 Upload a document → extract text → find key details → store in SQLite or PostgreSQL → dashboard → expiry alerts.
 
-Hosted demo: [LifeAdmin](https://lifeadmin-vinayakrastogi.onrender.com) ·
-[API documentation](https://lifeadmin-api-vinayakrastogi.onrender.com/docs).
+Hosted demo: [LifeAdmin](https://lifeadmin-aditya.onrender.com) ·
+[API documentation](https://lifeadmin-api-aditya.onrender.com/docs).
 The interface and API use separate free native Python services and share LifeAdmin's own
 PostgreSQL database. See [DEPLOYMENT.md](DEPLOYMENT.md) for the exact configuration.
 No paid AI or API keys needed; everything runs locally.

@@ -6,9 +6,9 @@ edT continues to communicate only over the LifeAdmin HTTP API.
 
 ## Current demonstration deployment
 
-- Interface: https://lifeadmin-vinayakrastogi.onrender.com
-- API: https://lifeadmin-api-vinayakrastogi.onrender.com
-- API documentation: https://lifeadmin-api-vinayakrastogi.onrender.com/docs
+- Interface: https://lifeadmin-aditya.onrender.com
+- API: https://lifeadmin-api-aditya.onrender.com
+- API documentation: https://lifeadmin-api-aditya.onrender.com/docs
 - Repository: https://github.com/vinayakrastogi/LifeAdmin (private)
 
 The interface and API are two **native Python Free web services** in Render's Singapore
